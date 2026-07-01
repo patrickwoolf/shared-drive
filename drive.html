@@ -148,7 +148,7 @@
     </div>
 
     <script>
-        const REPO = 'patrickwoolf/huiling-files'; //<username>/<files-repo-name>
+        const REPO = 'patrickwoolf/huiling-files'; <!-- 修改成 <username>/<files-repo-name> -->
         let currentPath = '', currentFilePath = '', currentFileSha = '', isDirty = false, isSaving = false, zoom = 1;
 
         const getHeaders = () => ({ 'Authorization': `token ${document.getElementById('ghToken').value}`, 'Accept': 'application/vnd.github.v3+json' });
