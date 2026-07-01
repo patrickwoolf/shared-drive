@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CloudDrive Editor Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+    <style>
+        #scroll-container { height: calc(100vh - 120px); overflow-y: auto; -webkit-overflow-scrolling: touch; background: #f8fafc; }
+        #editor { min-height: 100%; padding: 2rem; outline: none; background: white; margin: 0; transition: transform 0.2s ease-in-out; transform-origin: top left; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); width: 100%; box-sizing: border-box; }
+        #editor * { font-family: inherit !important; font-size: 1rem !important; color: #334155 !important; background-color: transparent !important; line-height: 1.5 !important; }
+        #editor table { border-collapse: collapse; width: 100%; margin: 10px 0; border: 1px solid #cbd5e1 !important; }
+        #editor td { 
+            border: 1px solid #cbd5e1 !important; 
+            padding: 12px 8px !important; /* 增加上下內距到 12px，左右 8px */
+            min-width: 60px;               /* 稍微加大基本寬度 */
+            height: 40px;                  /* 強制設定預設最小高度 */
+            vertical-align: middle;        /* 讓文字垂直置中 */
+        }
+        .toolbar-scroll { display: flex; overflow-x: auto; white-space: nowrap; -ms-overflow-style: none; scrollbar-width: none; }
+        .toolbar-scroll::-webkit-scrollbar { display: none; }
+        #sidebar { transition: all 0.3s ease; width: 280px; z-index: 50; flex-shrink: 0; }
+        .sidebar-closed { margin-left: -280px; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+        .status-saved { background: #22c55e; }
+        .status-unsaved { background: #ef4444; }
+        .status-syncing { background: #3b82f6; animation: pulse 1s infinite; }
+
+        /* 檔案項目與按鈕邏輯 */
+        .file-item { display: flex; align-items: flex-start; gap: 0.75rem; padding: 0.75rem; border-radius: 0.5rem; cursor: pointer; transition: background 0.2s; position: relative; }
+        .file-item:hover { background-color: #eff6ff; }
+        .file-name { font-size: 0.875rem; color: #334155; font-weight: 500; flex: 1; word-break: break-all; white-space: normal; line-height: 1.25rem; padding-right: 10px; }
+        
+        /* 搬移與刪除按鈕：Hover才出現，絕對定位擋住檔名 */
+        .action-btns { display: none; position: absolute; right: 0.4rem; top: 0.4rem; background: rgba(239, 246, 255, 0.98); backdrop-filter: blur(4px); padding: 4px; border-radius: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); gap: 4px; z-index: 10; border: 1px solid #dbeafe; }
+        .file-item:hover .action-btns { display: flex; }
+        .icon-btn { color: #64748b; padding: 4px; border-radius: 4px; transition: all 0.2s; }
+        .icon-btn:hover { background: white; color: #3b82f6; }
+        .icon-btn.delete:hover { color: #ef4444; background: #fef2f2; }
+
+        #editor ul {
+            list-style-type: disc !important;
+            padding-left: 1.5rem !important;
+            margin-top: 0.5rem !important;
+            margin-bottom: 0.5rem !important;
+        }
+        
+        #editor li {
+            display: list-item !important;
+            margin-bottom: 0.25rem !important;
+        }
+        
+        #editor blockquote {
+            margin-left: 2rem !important; /* 強制留出左邊距 */
+            border-left: 2px solid #e2e8f0; /* 選填：加上淡淡的左邊線，會讓筆記更有層次感 */
+            padding-left: 0.75rem;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 font-sans h-dvh flex flex-col overflow-hidden">
+    <header class="bg-white border-b p-2 shadow-sm z-20">
+        <div class="flex justify-between items-center px-2 gap-4">
+            <div class="flex items-center gap-2 shrink-0">
+                <button onclick="toggleSidebar()" class="p-2 hover:bg-slate-100 rounded-md"><i data-lucide="menu" size="20"></i></button>
+                <h1 class="text-md font-bold text-blue-600 flex items-center gap-1">
+                    <i data-lucide="cloud-cog" size="18"></i> CloudDrive
+                </h1>
+            </div>
+            <div class="flex items-center gap-2 flex-1 justify-end max-w-2xl">
+                <input type="password" id="ghToken" placeholder="GitHub Token" class="w-full max-w-[120px] border rounded-md px-3 py-1.5 text-xs outline-none bg-slate-50">
+                <div id="saveStatus" class="flex text-[10px] uppercase font-bold text-slate-400 items-center shrink-0">
+                    <span class="status-dot status-saved mr-1"></span> <span id="statusText">Ready</span>
+                </div>
+                <button onclick="syncFiles()" class="bg-blue-600 text-white p-1.5 rounded-md hover:bg-blue-700 transition-all"><i data-lucide="refresh-cw" size="16"></i></button>
+            </div>
+        </div>
+    </header>
+
+    <div class="flex flex-1 overflow-hidden">
+        <aside id="sidebar" class="bg-white border-r flex flex-col w-[280px]">
+            <div class="p-3 border-b bg-slate-50 space-y-2">
+                <div class="flex justify-between items-center">
+                    <span class="text-[10px] font-bold uppercase text-slate-400">Files</span>
+                    <div class="flex gap-1">
+                        <button onclick="document.getElementById('anyFileInput').click()" class="p-1.5 text-blue-600 hover:bg-blue-100 rounded-md" title="Upload File"><i data-lucide="upload" size="18"></i></button>
+                        <button onclick="createNewFolder()" class="p-1.5 text-slate-600 hover:bg-blue-100 rounded-md" title="New Folder"><i data-lucide="folder-plus" size="18"></i></button>
+                        <button onclick="createNewFile()" class="p-1.5 text-blue-600 hover:bg-blue-100 rounded-md" title="New File"><i data-lucide="file-plus" size="18"></i></button>
+                    </div>
+                </div>
+                <input type="file" id="anyFileInput" class="hidden" onchange="uploadAnyFile(event)">
+                <div id="breadcrumb" class="flex items-center gap-1 text-[11px] text-blue-600 font-medium overflow-x-auto bg-white p-1 rounded border border-slate-200">
+                    <span class="cursor-pointer hover:underline" onclick="navigateTo('')">Root</span>
+                </div>
+            </div>
+            <div id="fileList" class="flex-1 overflow-y-auto pt-2 px-2 pb-2 space-y-1"></div>
+        </aside>
+
+        <main class="flex-1 flex flex-col bg-white overflow-hidden w-full">
+            <div class="p-1 border-b bg-slate-50/50 toolbar-scroll flex items-center gap-1">
+                <button onclick="exec('bold')" class="p-2 min-w-[40px] hover:bg-white rounded"><i data-lucide="bold" size="16"></i></button>
+                <button onclick="exec('italic')" class="p-2 min-w-[40px] hover:bg-white rounded"><i data-lucide="italic" size="16"></i></button>
+                <button onclick="exec('insertUnorderedList')" class="p-2 min-w-[40px] hover:bg-white rounded" title="項目符號"><i data-lucide="list" size="16"></i></button>
+                <button onclick="exec('outdent')" class="p-2 min-w-[40px] hover:bg-white rounded" title="減少縮排 (後退)"><i data-lucide="indent-decrease" size="16"></i></button>
+<button onclick="exec('indent')" class="p-2 min-w-[40px] hover:bg-white rounded" title="增加縮排 (往前)"><i data-lucide="indent-increase" size="16"></i></button>
+                <div class="h-6 w-px bg-slate-300 mx-1"></div>
+                <button onclick="insertTable()" class="p-2 min-w-[40px] text-slate-700 hover:bg-white rounded"><i data-lucide="table" size="18"></i></button>
+                <div class="grid grid-cols-3 gap-px bg-slate-300 border border-slate-300 rounded overflow-hidden mx-1 shrink-0">
+                    <button onclick="tableAction('addRowAbove')" class="bg-white p-1.5 hover:bg-blue-50"><i data-lucide="arrow-up-to-line" size="14" class="text-blue-600"></i></button>
+                    <button onclick="tableAction('addColLeft')" class="bg-white p-1.5 hover:bg-blue-50"><i data-lucide="arrow-left-to-line" size="14" class="text-blue-600"></i></button>
+                    <button onclick="tableAction('addColRight')" class="bg-white p-1.5 hover:bg-blue-50"><i data-lucide="arrow-right-to-line" size="14" class="text-blue-600"></i></button>
+                    <button onclick="tableAction('addRowBelow')" class="bg-white p-1.5 hover:bg-blue-50"><i data-lucide="arrow-down-to-line" size="14" class="text-blue-600"></i></button>
+                    <button onclick="tableAction('deleteRow')" class="bg-white p-1.5 hover:bg-red-50"><i data-lucide="list-x" size="14" class="text-red-500"></i></button>
+                    <button onclick="tableAction('deleteColumn')" class="bg-white p-1.5 hover:bg-red-50"><i data-lucide="columns-2" size="14" class="text-red-500"></i></button>
+                </div>
+                <div class="h-6 w-px bg-slate-300 mx-1"></div>
+                <button onclick="document.getElementById('fileInput').click()" class="p-2 min-w-[40px] text-blue-600 hover:bg-white rounded"><i data-lucide="image-plus" size="18"></i></button>
+                <input type="file" id="fileInput" class="hidden" accept="image/*" onchange="handleImageSelect(event)">
+                <div class="h-6 w-px bg-slate-300 mx-1"></div>
+                <div class="flex items-center bg-slate-200/50 rounded-lg px-1 shrink-0">
+                    <button onclick="changeZoom(-0.1)" class="p-2 hover:bg-slate-200 rounded-md"><i data-lucide="zoom-out" size="16"></i></button>
+                    <button onclick="resetZoom()" id="zoomPercent" class="text-[10px] font-bold w-10 text-center">100%</button>
+                    <button onclick="changeZoom(0.1)" class="p-2 hover:bg-slate-200 rounded-md"><i data-lucide="zoom-in" size="16"></i></button>
+                </div>
+                
+                <div class="inline-block shrink-0 ml-1">
+                    <button onclick="toggleExportMenu(event)" id="exportBtn" class="p-2 text-slate-600 hover:bg-slate-200 rounded-md flex items-center gap-1" title="匯出檔案">
+                        <i data-lucide="download" size="18"></i>
+                        <i data-lucide="chevron-down" size="12"></i>
+                    </button>
+                    <!-- 使用固定定位 fixed，配合超高 z-50，確保絕對不會被編輯器擋住 -->
+                    <div id="exportDropdown" class="hidden fixed w-48 rounded-md shadow-xl bg-white border border-slate-200 shadow-slate-300/50 z-[100]">
+                        <div class="py-1" role="menu">
+                            <button onclick="exportFile('pdf')" class="w-full text-left block px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 flex items-center gap-2"><i data-lucide="file-text" size="14" class="text-red-500 shrink-0"></i> <span>下載為 PDF</span></button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="ml-auto pr-2 shrink-0">
+                    <span id="currentFileName" class="text-xs font-medium text-slate-400 truncate max-w-[100px] block">No file</span>
+                </div>
+            </div>
+            <div id="scroll-container">
+                <div id="editor" contenteditable="true" class="prose max-w-none text-base"></div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const REPO = 'patrickwoolf/my-online-drive';
+        let currentPath = '', currentFilePath = '', currentFileSha = '', isDirty = false, isSaving = false, zoom = 1;
+
+        const getHeaders = () => ({ 'Authorization': `token ${document.getElementById('ghToken').value}`, 'Accept': 'application/vnd.github.v3+json' });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const tk = localStorage.getItem('gh_token');
+            if (tk) document.getElementById('ghToken').value = tk;
+            syncFiles();
+            lucide.createIcons();
+        });
+
+        // 貼上圖片：徹底攔截 Base64，強制改為上傳 GitHub
+        document.getElementById('editor').addEventListener('paste', (e) => {
+            const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+            for (let item of items) {
+                if (item.type.indexOf('image') !== -1) {
+                    e.preventDefault(); // 阻止瀏覽器預設插入 Base64
+                    const file = item.getAsFile();
+                    uploadImageAndInsert(file);
+                }
+            }
+        });
+
+        async function uploadImageAndInsert(file) {
+            if (!currentFilePath) { alert("請先開啟一個檔案！"); return; }
+            if (!document.getElementById('ghToken').value) { alert("請輸入 GitHub Token！"); return; }
+        
+            updateStatus('syncing', '準備中...');
+        
+            let fileToUpload = file;
+        
+            // 1. HEIC 轉檔邏輯
+            if (file.name.toLowerCase().endsWith(".heic") || file.type === "image/heic") {
+                updateStatus('syncing', '正在轉換 HEIC (請稍候)...');
+                try {
+                    const blob = await heic2any({
+                        blob: file,
+                        toType: "image/jpeg",
+                        quality: 0.7
+                    });
+                    // 轉檔後建立新的 File 物件
+                    fileToUpload = new File([blob], file.name.replace(/\.heic$/i, ".jpg"), { type: "image/jpeg" });
+                } catch (err) {
+                    console.error("HEIC 轉換失敗:", err);
+                    updateStatus('unsaved', '轉檔失敗');
+                    return;
+                }
+            }
+        
+            // 2. 建立預覽與 ID
+            const tempId = 'img-' + Date.now();
+            const localUrl = URL.createObjectURL(fileToUpload);
+            document.execCommand('insertHTML', false, `<img src="${localUrl}" id="${tempId}" class="uploading" style="max-width:100%;">`);
+        
+            // 3. 轉 Base64 並上傳
+            const reader = new FileReader();
+            reader.onload = async () => {
+                const base64 = reader.result.split(',')[1];
+                const baseName = currentFilePath.split('/').pop();
+                const folderName = baseName.substring(0, baseName.lastIndexOf('.')) || baseName;
+                const uploadPath = `assets/${folderName}/${Date.now()}.jpg`;
+        
+                updateStatus('syncing', '正在上傳至雲端...');
+        
+                try {
+                    const res = await fetch(`https://api.github.com/repos/${REPO}/contents/${uploadPath}`, {
+                        method: 'PUT',
+                        headers: getHeaders(),
+                        body: JSON.stringify({ 
+                            message: `Upload img for ${folderName}`, 
+                            content: base64 
+                        })
+                    });
+        
+                    if (res.ok) {
+                        const d = await res.json();
+                        const img = document.getElementById(tempId);
+                        if (img) {
+                            img.src = d.content.download_url;
+                            img.classList.remove('uploading');
+                            img.removeAttribute('id');
+                            URL.revokeObjectURL(localUrl);
+                            updateStatus('saved', '圖片已存至 assets');
+                            
+                            isDirty = true;
+                            saveFile(); // 觸發 HTML 主檔案存檔
+                        }
+                    } else {
+                        const errorData = await res.json();
+                        alert("上傳失敗：" + errorData.message);
+                        updateStatus('unsaved', 'GitHub 上傳失敗');
+                    }
+                } catch (e) {
+                    updateStatus('unsaved', '網路連線錯誤');
+                    console.error(e);
+                }
+            };
+            reader.readAsDataURL(fileToUpload);
+        }
+        
+        // 圖片上傳邏輯：上傳後插入 URL 連結而非 Base64
+        // async function uploadImageAndInsert(file) {
+        //     if (!currentFilePath) { alert("請先開啟一個檔案！"); return; }
+        //     if (!document.getElementById('ghToken').value) { alert("請輸入 GitHub Token！"); return; }
+
+        //     let fileToUpload = file;
+            
+        //     // 檢查是否為 HEIC 檔案
+        //     if (file.name.toLowerCase().endsWith(".heic") || file.type === "image/heic") {
+        //         updateStatus('syncing', '正在轉換 HEIC 格式...');
+        //         try {
+        //             const blob = await heic2any({
+        //                 blob: file,
+        //                 toType: "image/jpeg",
+        //                 quality: 0.8
+        //             });
+        //             // 將轉換後的 Blob 包裝成 File 物件
+        //             fileToUpload = new File([blob], file.name.replace(/\.heic$/i, ".jpg"), { type: "image/jpeg" });
+        //         } catch (err) {
+        //             console.error("HEIC 轉換失敗:", err);
+        //             alert("HEIC 轉換失敗，請嘗試直接上傳 JPG。");
+        //             return;
+        //         }
+        //     }
+            
+        //     // 1. 建立暫時 ID 與本地預覽 URL
+        //     const tempId = 'img-' + Date.now();
+        //     const localUrl = URL.createObjectURL(file);
+            
+        //     // 2. 立即插入圖片，顯示上傳中狀態
+        //     document.execCommand('insertHTML', false, `<img src="${localUrl}" id="${tempId}" class="uploading" style="max-width:100%;">`);
+        //     updateStatus('syncing', '正在上傳圖片...');
+        
+        //     const reader = new FileReader();
+        //     reader.readAsDataURL(file);
+        //     reader.onload = async () => {
+        //         const base64 = reader.result.split(',')[1];
+                
+        //         // 3. 取得資料夾名稱：assets/檔案名稱(不含副檔名)/
+        //         const baseName = currentFilePath.split('/').pop();
+        //         const folderName = baseName.substring(0, baseName.lastIndexOf('.')) || baseName;
+        //         const uploadPath = `assets/${folderName}/${Date.now()}.jpg`;
+        
+        //         try {
+        //             const res = await fetch(`https://api.github.com/repos/${REPO}/contents/${uploadPath}`, {
+        //                 method: 'PUT',
+        //                 headers: getHeaders(),
+        //                 body: JSON.stringify({ message: `img for ${folderName}`, content: base64 })
+        //             });
+        
+        //             if (res.ok) {
+        //                 const d = await res.json();
+        //                 const img = document.getElementById(tempId);
+        //                 if (img) {
+        //                     // 4. 上傳成功，替換為正式 URL 並移除上傳樣式
+        //                     img.src = d.content.download_url;
+        //                     img.classList.remove('uploading');
+        //                     img.removeAttribute('id'); // 移除 ID 避免存檔冗餘
+                            
+        //                     URL.revokeObjectURL(localUrl); // 釋放記憶體
+        //                     updateStatus('saved', '圖片上傳成功');
+                            
+        //                     isDirty = true;
+        //                     saveFile(); // 強制觸發存檔
+        //                 }
+        //             }
+        //         } catch (e) {
+        //             updateStatus('unsaved', '上傳失敗');
+        //             console.error("圖片上傳出錯:", e);
+        //         }
+        //     };
+        // }
+
+        async function syncFiles() {
+            if (!document.getElementById('ghToken').value) return;
+            localStorage.setItem('gh_token', document.getElementById('ghToken').value);
+            updateStatus('syncing', 'Syncing...');
+            try {
+                const res = await fetch(`https://api.github.com/repos/${REPO}/contents/${currentPath}?t=${Date.now()}`, { headers: getHeaders() });
+                const files = await res.json();
+                const list = document.getElementById('fileList'); list.innerHTML = '';
+                if (!Array.isArray(files)) return;
+                files.sort((a, b) => (a.type === b.type) ? a.name.localeCompare(b.name) : (a.type === 'dir' ? -1 : 1));
+                files.forEach(f => {
+                    if (f.name === 'assets') return;
+                    const isDir = f.type === 'dir';
+                    const hasExt = f.name.includes('.');
+                    const ext = hasExt ? f.name.split('.').pop().toLowerCase() : '';
+                    const isEditable = !isDir && (!hasExt || ['html', 'txt', 'md'].includes(ext));
+                    const isPdf = ext === 'pdf';
+                    const div = document.createElement('div');
+                    div.className = 'file-item';
+                    div.onclick = (e) => {
+                        if (e.target.closest('.action-btns')) return;
+                        if (isDir) navigateTo(f.path);
+                        else handleFileClick(f.path, f.download_url, isEditable, isPdf);
+                    };
+                    div.innerHTML = `
+                        <i data-lucide="${isDir ? 'folder' : (isEditable ? 'file-text' : (isPdf ? 'file-digit' : 'file'))}" 
+                           size="18" class="${isDir ? 'text-amber-400' : (isEditable ? 'text-blue-500' : 'text-slate-400')} shrink-0 mt-0.5"></i>
+                        <span class="file-name">${f.name}</span>
+                        <div class="action-btns">
+                            <button onclick="event.stopPropagation(); moveItem('${f.path}', '${f.sha}')" class="icon-btn" title="移動"><i data-lucide="external-link" size="14"></i></button>
+                            <button onclick="event.stopPropagation(); deleteItem('${f.path}', '${f.sha}')" class="icon-btn delete" title="刪除"><i data-lucide="trash-2" size="14"></i></button>
+                        </div>`;
+                    list.appendChild(div);
+                });
+                lucide.createIcons();
+                updateBreadcrumbs();
+                updateStatus('saved', 'Ready');
+            } catch (err) { updateStatus('unsaved', 'Sync Error'); }
+        }
+
+        async function handleFileClick(path, url, isEditable, isPdf) {
+            if (isEditable) {
+                updateStatus('syncing', 'Loading...');
+                const res = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}?t=${Date.now()}`, { headers: getHeaders() });
+                const data = await res.json();
+                document.getElementById('editor').innerHTML = decodeURIComponent(escape(atob(data.content)));
+                currentFilePath = path; currentFileSha = data.sha;
+                document.getElementById('currentFileName').innerText = path;
+                isDirty = false; updateStatus('saved', 'Opened');
+            } else if (isPdf) {
+                const res = await fetch(url);
+                const blob = await res.blob();
+                window.open(URL.createObjectURL(new Blob([blob], {type: 'application/pdf'})), '_blank');
+            } else { window.open(url, '_blank'); }
+        }
+
+        function navigateTo(path) { currentPath = path; syncFiles(); }
+        function updateBreadcrumbs() {
+            const container = document.getElementById('breadcrumb');
+            container.innerHTML = `<span class="cursor-pointer hover:underline" onclick="navigateTo('')">Root</span>`;
+            if (!currentPath) return;
+            let full = '';
+            currentPath.split('/').filter(p => p).forEach(part => {
+                full += (full ? '/' : '') + part;
+                container.innerHTML += ` <i data-lucide="chevron-right" size="10" class="mx-1"></i><span class="cursor-pointer hover:underline" onclick="navigateTo('${full}')">${part}</span>`;
+            });
+            lucide.createIcons();
+        }
+
+        async function saveFile() {
+            if (!currentFilePath || isSaving) return;
+            isSaving = true; updateStatus('syncing', 'Saving...');
+            const content = btoa(unescape(encodeURIComponent(document.getElementById('editor').innerHTML)));
+            try {
+                const res = await fetch(`https://api.github.com/repos/${REPO}/contents/${currentFilePath}`, {
+                    method: 'PUT', headers: getHeaders(), body: JSON.stringify({ message: 'save', content, sha: currentFileSha })
+                });
+                if (res.ok) {
+                    const d = await res.json();
+                    currentFileSha = d.content.sha;
+                    isDirty = false;
+                    updateStatus('saved', 'Auto-saved');
+                }
+            } catch (e) { updateStatus('unsaved', 'Save Error'); }
+            isSaving = false;
+        }
+
+        async function moveItem(oldPath, sha) {
+            const newPath = prompt("移動至:", oldPath);
+            if (!newPath || newPath === oldPath) return;
+            const resGet = await fetch(`https://api.github.com/repos/${REPO}/contents/${oldPath}`, { headers: getHeaders() });
+            const data = await resGet.json();
+            const resPut = await fetch(`https://api.github.com/repos/${REPO}/contents/${newPath}`, {
+                method: 'PUT', headers: getHeaders(), body: JSON.stringify({ message: 'move', content: data.content })
+            });
+            if (resPut.ok) {
+                await fetch(`https://api.github.com/repos/${REPO}/contents/${oldPath}`, { method: 'DELETE', headers: getHeaders(), body: JSON.stringify({ message: 'clean', sha }) });
+                syncFiles();
+            }
+        }
+
+        async function deleteItem(path, sha) {
+            if (confirm(`刪除 "${path}"?`)) {
+                await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, { method: 'DELETE', headers: getHeaders(), body: JSON.stringify({ message: 'delete', sha }) });
+                syncFiles();
+            }
+        }
+
+        async function createNewFile() {
+            const name = prompt("檔名:"); if (!name) return;
+            currentFilePath = currentPath ? `${currentPath}/${name}` : name;
+            currentFileSha = ''; document.getElementById('editor').innerHTML = '<div></div>';
+            await saveFile(); syncFiles();
+        }
+
+        async function createNewFolder() {
+            const name = prompt("資料夾名稱:"); if (!name) return;
+            const path = currentPath ? `${currentPath}/${name}/.keep` : `${name}/.keep`;
+            await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, { method: 'PUT', headers: getHeaders(), body: JSON.stringify({ message: 'new dir', content: btoa(' ') }) });
+            syncFiles();
+        }
+
+        async function uploadAnyFile(e) {
+            const file = e.target.files[0]; 
+            if (!file) return;
+            
+            updateStatus('syncing', 'Uploading...');
+            const reader = new FileReader();
+            
+            reader.onload = async () => {
+                const base64 = reader.result.split(',')[1];
+                const path = currentPath ? `${currentPath}/${file.name}` : file.name;
+                
+                try {
+                    // 1. 先嘗試獲取該路徑下是否已有檔案（為了拿到 sha）
+                    let sha = '';
+                    const checkRes = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, { 
+                        headers: getHeaders() 
+                    });
+                    
+                    if (checkRes.ok) {
+                        const existingFile = await checkRes.json();
+                        sha = existingFile.sha;
+                    }
+        
+                    // 2. 執行上傳 (如果有 sha 就是更新，沒有就是新建)
+                    const res = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, {
+                        method: 'PUT',
+                        headers: getHeaders(),
+                        body: JSON.stringify({ 
+                            message: `Upload file: ${file.name}`, 
+                            content: base64,
+                            sha: sha // 如果檔案存在，這行是必要的
+                        })
+                    });
+        
+                    if (res.ok) {
+                        updateStatus('saved', 'Upload Success');
+                        syncFiles(); // 重新整理列表
+                    } else {
+                        const err = await res.json();
+                        alert("Upload failed: " + err.message);
+                        updateStatus('unsaved', 'Error');
+                    }
+                } catch (err) {
+                    console.error(err);
+                    updateStatus('unsaved', 'Upload Error');
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function changeZoom(delta) { zoom = Math.max(0.5, Math.min(2, zoom + delta)); applyZoom(); }
+        function resetZoom() { zoom = 1; applyZoom(); }
+        function applyZoom() { document.getElementById('editor').style.transform = `scale(${zoom})`; document.getElementById('zoomPercent').innerText = `${Math.round(zoom * 100)}%`; }
+        function toggleSidebar() { document.getElementById('sidebar').classList.toggle('sidebar-closed'); }
+        function updateStatus(s, t) { const dot = document.querySelector('.status-dot'); if(dot) dot.className = `status-dot status-${s} mr-1`; document.getElementById('statusText').innerText = t; }
+        function exec(c) { document.execCommand(c, false, null); }
+        function insertTable() { 
+            // 在每個 td 中加入 <br> 確保一開始就能順利點擊並擁有高度
+            const defaultTable = '<table><tr><td><br></td><td><br></td></tr><tr><td><br></td><td><br></td></tr></table><p><br></p>';
+            document.execCommand('insertHTML', false, defaultTable); 
+        }
+        function tableAction(cmd) {
+            const sel = window.getSelection(); 
+            const td = sel.anchorNode?.parentElement?.closest('td') || sel.anchorNode?.closest('td');
+            
+            if (!td) return;
+            const tr = td.parentElement;
+            const table = tr.closest('table');
+            const colIdx = td.cellIndex;
+            const rowIdx = tr.rowIndex;
+        
+            if (cmd === 'addRowAbove' || cmd === 'addRowBelow') {
+                const targetIdx = cmd === 'addRowAbove' ? rowIdx : rowIdx + 1;
+                const newRow = table.insertRow(targetIdx);
+                // 根據目前表格第一列的欄位數量，自動補滿新列的 td
+                const colCount = table.rows[0].cells.length;
+                for (let i = 0; i < colCount; i++) {
+                    const newCell = newRow.insertCell(i);
+                    newCell.innerHTML = '<br>'; // 放入空行，確保欄位有高度且可點擊
+                }
+            } 
+            else if (cmd === 'addColLeft' || cmd === 'addColRight') {
+                const targetIdx = cmd === 'addColLeft' ? colIdx : colIdx + 1;
+                Array.from(table.rows).forEach(r => {
+                    const newCell = r.insertCell(targetIdx);
+                    newCell.innerHTML = '<br>'; // 補上基本內容，防瀏覽器塌陷
+                });
+            } 
+            else if (cmd === 'deleteRow') {
+                table.deleteRow(rowIdx);
+            } 
+            else if (cmd === 'deleteColumn') {
+                Array.from(table.rows).forEach(r => {
+                    if (r.cells[colIdx]) r.deleteCell(colIdx);
+                });
+            }
+        
+            // 變更表格結構後，觸發存檔邏輯
+            isDirty = true;
+            updateStatus('unsaved', 'Unsaved');
+        }
+
+        function handleImageSelect(e) { uploadImageAndInsert(e.target.files[0]); }
+        document.getElementById('editor').addEventListener('input', () => { isDirty = true; updateStatus('unsaved', 'Unsaved'); });
+        setInterval(() => { if (isDirty) saveFile(); }, 15000);
+        
+        // 控制選單顯示、隱藏與智慧定位
+        function toggleExportMenu(e) {
+            e.stopPropagation();
+            const menu = document.getElementById('exportDropdown');
+            const btn = document.getElementById('exportBtn');
+            
+            menu.classList.toggle('hidden');
+            
+            if (!menu.classList.contains('hidden')) {
+                lucide.createIcons();
+                
+                // 動態計算按鈕在螢幕上的絕對位置，讓 fixed 選單精準黏在按鈕下方
+                const rect = btn.getBoundingClientRect();
+                menu.style.top = `${rect.bottom + window.scrollY + 4}px`;
+                // 靠右對齊按鈕
+                menu.style.left = `${rect.right - menu.offsetWidth}px`;
+            }
+        }
+        
+        // 點擊畫面其他地方自動收起選單
+        document.addEventListener('click', () => {
+            document.getElementById('exportDropdown')?.classList.add('hidden');
+        });
+                                
+        // 核心匯出分配器 (全面修正字串跳脫語法錯誤，保證不影響初始載入)
+        async function exportFile(type) {
+            const editor = document.getElementById('editor');
+            let editorContent = editor.innerHTML.trim();
+            const cleanCheck = editorContent.replace(/<[^>]*>/g, '').replace(/\s/g, '');
+            
+            if (cleanCheck === "" && !editorContent.includes('<img') && !editorContent.includes('<table')) {
+                alert("編輯器內目前沒有實體內容可以匯出喔！請先輸入一些文字。");
+                return;
+            }
+        
+            let baseName = "document";
+            if (currentFilePath) {
+                baseName = currentFilePath.split('/').pop().split('.')[0];
+            } else {
+                baseName = `doc_${new Date().toISOString().slice(0, 10)}`;
+            }
+        
+            // 匯出排版專用樣式表
+            const commonStyles = `
+                body { font-family: Arial, sans-serif; color: #334155; line-height: 1.5; padding: 40px; background: #ffffff; max-width: 800px; margin: 0 auto; }
+                table { border-collapse: collapse; width: 100%; margin: 15px 0; border: 1px solid #cbd5e1 !important; }
+                td { border: 1px solid #cbd5e1 !important; padding: 10px 8px; min-width: 60px; height: 40px; vertical-align: middle; }
+                blockquote { margin-left: 20px; border-left: 3px solid #e2e8f0; padding-left: 10px; color: #64748b; font-style: italic; }
+                ul { list-style-type: disc !important; padding-left: 20px; margin: 10px 0; }
+                li { display: list-item !important; margin-bottom: 4px; }
+                img { max-width: 100%; height: auto; display: block; margin: 10px 0; }
+                .export-tip { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; padding: 12px; border-radius: 6px; font-size: 14px; margin-bottom: 20px; font-weight: 500; }
+                @media print { .export-tip { display: none !important; } }
+            `;
+        
+            document.getElementById('exportDropdown').classList.add('hidden');
+        
+            updateStatus('syncing', '正在開啟 PDF 列印視窗...');
+            const printWindow = window.open('', '_blank');
+            if (!printWindow) {
+                alert("新分頁被瀏覽器彈出式視窗攔截了！請允許此網站開啟彈出式視窗.");
+                return;
+            }
+            printWindow.document.write(`
+                <!DOCTYPE html><html><head><meta charset="UTF-8"><title>${baseName}</title><style>${commonStyles}</style></head>
+                <body>${editorContent}<script>window.onload = function() { setTimeout(function() { window.print(); }, 300); };<\/script></body></html>
+            `);
+            printWindow.document.close();
+            updateStatus('saved', '已開啟列印視窗');
+        }
+    </script>
+</body>
+</html>
