@@ -175,7 +175,7 @@
     <div class="btn-group" style="border:none;">
       <span class="group-label">其他</span>
       <div class="group-row">
-          // 修改成自己的drive網址. e.g. https://<username>.github.io/<drive-repo-name>/drive.html
+          <!-- 修改成自己的drive主頁面網址. e.g. https://<username>.github.io/<drive-repo-name>/drive.html -->
           <button class="btn" onclick="window.open('https://patrickwoolf.github.io/drive/drive.html', '_blank')">📝 文件編輯器</button>
       </div>
     </div>
@@ -188,7 +188,7 @@
 </div>
 
 <script>
-    const REPO = "patrickwoolf/huiling-files"; // 修改成自己放東西的repository. e.g. <username>/<file-repo-name>
+    const REPO = "patrickwoolf/huiling-files"; <!-- 修改成自己放東西的repository. e.g. <username>/<file-repo-name> -->
     let workbook = { "Sheet1": { data: [["","",""]], rowH: [35], colW: [100,100,100], format: "wrap", cellStyles: {} } };
     let activeSheet = "Sheet1";
     let currentFile = null, currentSha = null, lastSavedData = "";
